@@ -181,12 +181,12 @@ int fs_umount(void) {
 	free(FAT_blocks);
 
 	// reset file descriptors
-    for(int i = 0; i < FS_OPEN_MAX_COUNT; i++) {
+  for(int i = 0; i < FS_OPEN_MAX_COUNT; i++) {
 		fd_table[i].offset = 0;
 		fd_table[i].is_used = false;
 		fd_table[i].file_index = -1;
 		memset(fd_table[i].file_name, 0, FS_FILENAME_LEN);
-    }
+  }
 
 	block_disk_close();
 	return 0;
@@ -534,7 +534,6 @@ int fs_write(int fd, void *buf, size_t count) {
 	fd_table[fd].offset += total_byte_written;
 	return total_byte_written;
 }
-
 
 /*
 Read a File:

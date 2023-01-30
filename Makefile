@@ -30,7 +30,7 @@ CC	= gcc
 CFLAGS	:= -Wall -Werror 
 CFLAGS	+= -O2
 #CFLAGS	+= -O0
-#CFLAGS	+= -g
+CFLAGS	+= -g
 CFLAGS	+= -pipe
 CFLAGS	+= -lm
 
