@@ -157,6 +157,60 @@ void thread_fs_rm(void *arg)
 	printf("Removed file '%s'\n", filename);
 }
 
+void thread_fs_type(void *arg)
+{
+	struct thread_arg *t_arg = arg;
+	char *diskname, *filename, *buf;
+	int fs_fd;
+  size_t written=0;
+
+	if (t_arg->argc < 2)
+		die("Usage: <diskname> <fs filename>");
+
+	diskname = t_arg->argv[0];
+  filename = t_arg->argv[1];
+
+	/* Now, deal with our filesystem:
+	 * - mount, create a new file, copy content of host file into this new
+	 *   file, close the new file, and umount
+	 */
+	if (fs_mount(diskname))
+		die("Cannot mount diskname");
+
+	if (fs_create(filename)) {
+		fs_umount();
+		die("Cannot create file");
+	}
+
+	fs_fd = fs_open(filename);
+	if (fs_fd < 0) {
+		fs_umount();
+		die("Cannot open file");
+	}
+
+  char buff[1024];
+  while(fgets(buff, 1024, stdin)){
+    buf = buff;
+    size_t strlength = strlen(buff);
+    size_t written_bytes=0;
+    while(strlength){
+      written_bytes = fs_write(fs_fd, buf, strlength);
+      strlength -= written_bytes;
+      buf+=written_bytes;
+    }
+    written += written_bytes;
+  }
+
+	if (fs_close(fs_fd)) {
+		fs_umount();
+		die("Cannot close file");
+	}
+
+	if (fs_umount())
+		die("Cannot unmount diskname");
+
+	printf("Wrote file '%s' (%zu bytes)\n", filename, written);
+}
 void thread_fs_add(void *arg)
 {
 	struct thread_arg *t_arg = arg;
@@ -268,6 +322,7 @@ static struct {
 	{ "rm",		thread_fs_rm },
 	{ "cat",	thread_fs_cat },
 	{ "stat",	thread_fs_stat },
+	{ "type",	thread_fs_type },
 };
 
 void usage(void)

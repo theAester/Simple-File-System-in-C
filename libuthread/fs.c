@@ -454,17 +454,22 @@ int fs_write(int fd, void *buf, size_t count) {
 
 	// locate and store indices of the free blocks
 	// to avoid overwriting other file contents
-	for(int j = 0; j < superblock->num_data_blocks; j++){
-		if(FAT_blocks[j].words == 0){
-			fat_block_indices[available_data_blocks] = j;
-			available_data_blocks++;
-		}
-		if(available_data_blocks == extra_blocks)
-			break;
-	}
+  {
+    int reach_flag=0;
+    for(int j = 0; j < superblock->num_data_blocks; j++){
+      if(available_data_blocks == extra_blocks)
+        break;
+      if(FAT_blocks[j].words == 0){
+        reach_flag=1;
+        fat_block_indices[available_data_blocks] = j;
+        available_data_blocks++;
+      }
+    }
+    if(reach_flag)
+      num_blocks = available_data_blocks; 
+  }
 
 	// for the case where there are no more availabe data blocks on disk
-	num_blocks = available_data_blocks; 
 
 	// extending the fat table for a file when it already
 	// contains data 
