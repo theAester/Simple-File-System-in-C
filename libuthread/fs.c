@@ -374,10 +374,6 @@ int fs_close(int fd) {
         return -1;
     } 
 
-    //TODO: (PART3)
-    //remove this filename from <open_list>
-    //don't forget to lock!
-
     fd_obj->is_used = false;
 
 	return 0;
@@ -595,7 +591,7 @@ int fs_write(int fd, void *buf, size_t count) {
     
     //TODO: (PART2)
     //why do this again?
-    //i don't get it what's the kick? why dont you do it once like the rest of us?
+    //i don't get it what's the kick? why dont you do it only once like the rest of us?
 		if(i < num_blocks - 1){
 			FAT_blocks[curr_fat_index].words = fat_block_indices[i+1];
 			curr_fat_index = FAT_blocks[curr_fat_index].words;
