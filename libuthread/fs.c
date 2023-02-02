@@ -70,6 +70,9 @@ struct rootdirectory_t {
 	uint32_t file_size;
 	uint16_t start_data_block;
 	uint8_t  unused[10];
+  //TODO: (PART1)
+  //add a uint8_t field to indicate initialized file.
+  //change the unsuded padding bytes to 9 to keep this a constant length
 } __attribute__((packed));
 
 
@@ -77,6 +80,11 @@ struct file_descriptor_t {
     bool   is_used;       
     int    file_index;              
     size_t offset;  
+    //TODO: (PART5)
+    //add a history field to be realloc-ed and keep all file content.
+    //ideally a histroy block must be a struct with a block of memory and an index(block_index)
+    //
+    //also add a FAT history field. a linked list of all the FAT indices occupied by this file in the beginning
 	char   file_name[FS_FILENAME_LEN];
 };
 
@@ -164,6 +172,13 @@ int fs_umount(void) {
 		return -1;
 	}
 
+  //TODO: (PART5)
+  //ROLLLLLLL BACCCKKKK!
+  //first, write all of the saved FAT list back into the fat entries untill you reach EOC. 
+  //then continue filling the rest of FAT blocks occupied by the file with EMPTY
+  //
+  //THEEEN go through the history list, locate the data blocks and write them over.
+
 	for(int i = 0; i < superblock->num_FAT_blocks; i++) {
 		if(block_write(i + 1, (void*)FAT_blocks + (i * BLOCK_SIZE)) < 0) {
 			fs_error("failure to write to block \n");
@@ -218,6 +233,10 @@ Create a new file:
 */
 int fs_create(const char *filename) {
 
+  //TODO: (PART3)
+  //for the second issue mentioned. lets be super lazy and just serialize create requsts
+  //create a lock at the top and use it here
+
 	// perform error checking first 
 	if(error_free(filename) == false) {
 		fs_error("error associated with filename");
@@ -232,6 +251,8 @@ int fs_create(const char *filename) {
 			strcpy(root_dir_block[i].filename, filename);
 			root_dir_block[i].file_size     = 0;
 			root_dir_block[i].start_data_block = EOC;
+      //TODO: (PART1)
+      //initialize the new field
 
 			return 0;
 		}
@@ -301,12 +322,25 @@ int fs_open(const char *filename) {
         fs_error("file @[%s] doesnt exist\n", filename);
         return -1;
     } 
-
+    
     int fd = locate_avail_fd();
     if (fd == -1){
 		fs_error("max file descriptors already allocated\n");
         return -1;
     }
+
+  //TODO: (PART3)
+  //[redacted]add a check to see if the file is already opened by someone else by searching in the newly created <open_list>
+  //no need to create a new list (dont create nor use <open_list>) use fd_table instead and see the is_open function
+  //ideally you would copy the is_open function implementation and change the hard-coded error message
+  //and use it for this.
+  //then explain that, since file access mode is not specified in this FS,
+  //best we can do it to just not let two people open the same file (no. we are not lazy)
+  //don't forget to lock!
+
+  //TODO: (PART5)
+  //initialize the FAT list! (look at fs_write funtion line 526 to see how)
+  //just continue adding FAT indecies to fd's FAT list till you reach EOC
 
 	fd_table[fd].is_used    = true;
 	fd_table[fd].file_index = file_index;
@@ -314,7 +348,7 @@ int fs_open(const char *filename) {
 	
 	strcpy(fd_table[fd].file_name, filename); 
 
-    return fd;
+  return fd;
 }
 
 
@@ -339,6 +373,10 @@ int fs_close(int fd) {
         fs_error("file @[%s] doesnt exist\n", fd_obj->file_name);
         return -1;
     } 
+
+    //TODO: (PART3)
+    //remove this filename from <open_list>
+    //don't forget to lock!
 
     fd_obj->is_used = false;
 
@@ -398,6 +436,11 @@ int fs_lseek(int fd, size_t offset) {
 	return 0;
 }
 
+//TODO: (PART2)
+//The entire write function is FUCKED!
+//there are many bugs and wrong policies
+//probably needs a rewrite
+
 // Write to a file:
 int fs_write(int fd, void *buf, size_t count) {
 	// Error Checking 
@@ -417,10 +460,15 @@ int fs_write(int fd, void *buf, size_t count) {
 
 	// find relative information about file 
 	char *file_name = fd_table[fd].file_name;				
-	int file_index = locate_file(file_name);				
+	int file_index = fd_table[fd].file_index;			
 	int offset = fd_table[fd].offset;						
 
 	struct rootdirectory_t *the_dir = &root_dir_block[file_index];	
+
+  //TODO: (PART1)
+  //check if filename begins with "lock"
+  //if so, check if the file is initialized before using the new field
+  //if so, throw_error and exit
 
 	int num_blocks = ((count + (offset % BLOCK_SIZE)) / BLOCK_SIZE) + 1; 
 	int cur_block = offset/BLOCK_SIZE;					
@@ -434,6 +482,9 @@ int fs_write(int fd, void *buf, size_t count) {
 		int block_difference = offset + num_blocks * BLOCK_SIZE;
 		extra_blocks = (block_difference / BLOCK_SIZE) - 1;
 		extra_blocks = extra_blocks - file_width;
+    //TODO: (PART2)
+    //There is prolly a bug here
+    //extra_blocks can be zero (see line 471)
 	}
 	else extra_blocks = num_blocks;
 
@@ -450,48 +501,61 @@ int fs_write(int fd, void *buf, size_t count) {
 	curr_fat_index = go_to_cur_FAT_block(curr_fat_index, cur_block);
 
 	int available_data_blocks = 0;
-	int fat_block_indices[extra_blocks];
+	int fat_block_indices[extra_blocks]; // WHAT???
 
 	// locate and store indices of the free blocks
 	// to avoid overwriting other file contents
-  {
-    int reach_flag=0;
-    for(int j = 0; j < superblock->num_data_blocks; j++){
-      if(available_data_blocks == extra_blocks)
-        break;
-      if(FAT_blocks[j].words == 0){
-        reach_flag=1;
-        fat_block_indices[available_data_blocks] = j;
-        available_data_blocks++;
-      }
+
+  //TODO: (PART2)
+  //maybe bug
+  for(int j = 0; j < superblock->num_data_blocks; j++){
+    if(available_data_blocks == extra_blocks)
+      break;
+    if(FAT_blocks[j].words == 0){
+      fat_block_indices[available_data_blocks] = j;
+      available_data_blocks++;
     }
-    if(reach_flag)
-      num_blocks = available_data_blocks; 
   }
 
 	// for the case where there are no more availabe data blocks on disk
+  //num_blocks = available_data_blocks; 
 
 	// extending the fat table for a file when it already
 	// contains data 
+
+  //TODO: (PART2)
+  //This if block is probably redundant here
+  //move it to the next block in order to fix
 	if(the_dir->start_data_block == EOC) { 
 		curr_fat_index = fat_block_indices[0];
 		the_dir->start_data_block = curr_fat_index;
 	}
 	else {
+    //TODO: (PART2)
+    //worst piece of C code i have seen
+    //hurts my eyes to watch
+    //several acts of EOC indexing.
+    //extremey unsafe
+    //FIX THIS!
+    //prolly done by changing the while cond. to FAT_...[frst_...]
 		int frst_dta_blk_i = the_dir->start_data_block;
 		while(frst_dta_blk_i != EOC){
 			frst_dta_blk_i = FAT_blocks[frst_dta_blk_i].words;
 		}
-		for(int k =0; k < num_blocks; k++){
+		for(int k =0; k < num_blocks; k++){ // < prolly num_blocks -> available_data_blocks
 			FAT_blocks[frst_dta_blk_i].words = fat_block_indices[k];
 			frst_dta_blk_i = FAT_blocks[frst_dta_blk_i].words;
 		}
-		FAT_blocks[frst_dta_blk_i].words = EOC;
+		FAT_blocks[frst_dta_blk_i].words = EOC; // < we fuck up here (for now)
 	}
 
-	num_blocks = ((count + (offset % BLOCK_SIZE)) / BLOCK_SIZE) + 1;
+	num_blocks = ((count + (offset % BLOCK_SIZE)) / BLOCK_SIZE) + 1; // ok but why??
 
 	// write to the disk as much as we can (dont overload the disk)
+  
+  //TODO: (PART2)
+  //Redundant after checks above.
+  //once they are fixed this must go...
 	int num_free = get_num_FAT_free_blocks();
 	if (num_blocks > num_free) {
 		num_blocks = num_free;
@@ -499,12 +563,24 @@ int fs_write(int fd, void *buf, size_t count) {
 
 	// main iteration loop for writing block per block
 	for (int i = 0; i < num_blocks; i++) {
+    // clamping to the end of a block
 		if (location + amount_to_write > BLOCK_SIZE) {
 			left_shift = BLOCK_SIZE - location;
 		} else {
 			left_shift = amount_to_write;
 		}
+    //TODO: (PART2)
+    //block writing at nonzero location erases all the date befor
+    //fix this.
+    //[redacted]prolly only needs to be checked for i = 0
+    //yes it only needs to be checked for i=0
+    
 
+    //TODO: (PART5)
+    //this block is about to be overwritten. create a new history object, copy the block into it and set its index
+    //then add it to the file descriptors history list. and THEN, write the block. 
+    //its best to write helper functions for accessing and updating history, because a block can be overwritten multiple times
+    //and you need to check if an older history entry exists before adding a new one
 		memcpy(bounce_buff + location, write_buf, left_shift);
 		block_write(curr_fat_index + superblock->data_start_index, (void*)bounce_buff);
 		
@@ -512,10 +588,14 @@ int fs_write(int fd, void *buf, size_t count) {
 		total_byte_written += left_shift;
 		write_buf += left_shift;
 
-		location= 0;
+		location= 0; // < ah perfection
 		amount_to_write -= left_shift;
 
 		// updating the final FAT entry values 
+    
+    //TODO: (PART2)
+    //why do this again?
+    //i don't get it what's the kick? why dont you do it once like the rest of us?
 		if(i < num_blocks - 1){
 			FAT_blocks[curr_fat_index].words = fat_block_indices[i+1];
 			curr_fat_index = FAT_blocks[curr_fat_index].words;
@@ -542,19 +622,19 @@ Read a File:
 */
 int fs_read(int fd, void *buf, size_t count) {
 	
-	// error check 
-    if(fd_table[fd].is_used == false || 
-	   fd >= FS_OPEN_MAX_COUNT) {
-		fs_error("invalid file descriptor [%d]", fd);
-        return -1;
-    } else if (count <= 0) {
-		fs_error("request nbyte amount is trivial");
-		return -1;
-	} 
+  // error check 
+  if(fd_table[fd].is_used == false || 
+    fd >= FS_OPEN_MAX_COUNT) {
+    fs_error("invalid file descriptor [%d]", fd);
+    return -1;
+  } else if (count <= 0) {
+    fs_error("request nbyte amount is trivial");
+    return -1;
+  } 
 
 	// gather nessessary information 
 	char *file_name = fd_table[fd].file_name;
-	int file_index = locate_file(file_name);
+	int file_index = fs_table[fd].file_index;
 	size_t offset = fd_table[fd].offset;
 	
 	struct rootdirectory_t *the_dir = &root_dir_block[file_index];
