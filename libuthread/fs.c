@@ -455,7 +455,7 @@ int fs_write(int fd, void *buf, size_t count) {
 	}
 
 	// find relative information about file 
-	char *file_name = fd_table[fd].file_name;				
+	//char *file_name = fd_table[fd].file_name;				
 	int file_index = fd_table[fd].file_index;			
 	int offset = fd_table[fd].offset;						
 
@@ -481,6 +481,7 @@ int fs_write(int fd, void *buf, size_t count) {
     //TODO: (PART2)
     //There is prolly a bug here
     //extra_blocks can be zero (see line 471)
+	// attended -- no bug
 	}
 	else extra_blocks = num_blocks;
 
@@ -502,23 +503,26 @@ int fs_write(int fd, void *buf, size_t count) {
 	// locate and store indices of the free blocks
 	// to avoid overwriting other file contents
 
-  //TODO: (PART2)
-  //maybe bug
-  for(int j = 0; j < superblock->num_data_blocks; j++){
-    if(available_data_blocks == extra_blocks)
-      break;
-    if(FAT_blocks[j].words == 0){
-      fat_block_indices[available_data_blocks] = j;
-      available_data_blocks++;
-    }
-  }
+	//TODO: (PART2)
+	//maybe bug
+	for(int j = 0; j < superblock->num_data_blocks; j++){
+		if(available_data_blocks == extra_blocks)
+			break;
+		if(FAT_blocks[j].words == 0){
+			fat_block_indices[available_data_blocks] = j;
+			available_data_blocks++;
+		}
+	}
+	//attended - no bug
 
 	// for the case where there are no more availabe data blocks on disk
-  //num_blocks = available_data_blocks; 
+	//num_blocks = available_data_blocks; 
 
 	// extending the fat table for a file when it already
 	// contains data 
 
+	FAT_blocks[fat_block_indices[available_data_blocks-1]].words = EOC;
+/*
   //TODO: (PART2)
   //This if block is probably redundant here
   //move it to the next block in order to fix
@@ -544,7 +548,25 @@ int fs_write(int fd, void *buf, size_t count) {
 		}
 		FAT_blocks[frst_dta_blk_i].words = EOC; // < we fuck up here (for now)
 	}
-
+*/
+	int frst_dta_blk_i = the_dir->start_data_block;
+	if(frst_dta_blk_i == EOC){
+		if(available_data_blocks == 0){
+			fs_error("something is really really bad");
+		}
+		the_dir->start_data_block = fat_block_indices[0];
+		frst_dta_blk_i = fat_block_indices[0];
+		curr_fat_index = fat_block_indices[0];
+	}
+	while(FAT_blocks[frst_dta_blk_i].words != EOC){
+		frst_dta_blk_i = FAT_blocks[frst_dta_blk_i].words;
+	}
+	for(int k =0; k < available_data_blocks-1; k++){ // < prolly num_blocks -> available_data_blocks
+		FAT_blocks[frst_dta_blk_i].words = fat_block_indices[k];
+		frst_dta_blk_i = FAT_blocks[frst_dta_blk_i].words;
+	}
+	FAT_blocks[frst_dta_blk_i].words = EOC; // < we fuck up here (for now)
+	//attended
 	num_blocks = ((count + (offset % BLOCK_SIZE)) / BLOCK_SIZE) + 1; // ok but why??
 
 	// write to the disk as much as we can (dont overload the disk)
@@ -552,10 +574,11 @@ int fs_write(int fd, void *buf, size_t count) {
   //TODO: (PART2)
   //Redundant after checks above.
   //once they are fixed this must go...
-	int num_free = get_num_FAT_free_blocks();
-	if (num_blocks > num_free) {
-		num_blocks = num_free;
-	}
+//	int num_free = get_num_FAT_free_blocks();
+//	if (num_blocks > num_free) {
+//		num_blocks = num_free;
+//	}
+	//	attended
 
 	// main iteration loop for writing block per block
 	for (int i = 0; i < num_blocks; i++) {
@@ -566,10 +589,14 @@ int fs_write(int fd, void *buf, size_t count) {
 			left_shift = amount_to_write;
 		}
     //TODO: (PART2)
-    //block writing at nonzero location erases all the date befor
+    //block writing at nonzero location erases all the date before
     //fix this.
     //[redacted]prolly only needs to be checked for i = 0
     //yes it only needs to be checked for i=0
+		if(location !=0){
+			block_read(curr_fat_index + superblock->data_start_index, (void*)bounce_buff);
+		}
+	// TODO attended
     
 
     //TODO: (PART5)
@@ -629,8 +656,8 @@ int fs_read(int fd, void *buf, size_t count) {
   } 
 
 	// gather nessessary information 
-	char *file_name = fd_table[fd].file_name;
-	int file_index = fs_table[fd].file_index;
+	//char *file_name = fd_table[fd].file_name;
+	int file_index = fd_table[fd].file_index;
 	size_t offset = fd_table[fd].offset;
 	
 	struct rootdirectory_t *the_dir = &root_dir_block[file_index];
