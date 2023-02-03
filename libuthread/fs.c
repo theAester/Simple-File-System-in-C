@@ -12,7 +12,6 @@
 
 char prefix_important[] = "lock";
 sem_t create_mutex;
-sem_t open_mutex;
 
 // Very nicely display "Function Source of error: the error message"
 #define fs_error(fmt, ...) \
@@ -75,6 +74,7 @@ struct rootdirectory_t {
 	uint32_t file_size;
 	uint16_t start_data_block;
 	uint8_t initialized_file;
+	sem_t mutex;
 	uint8_t  unused[9];
   //TODO: (PART1)
   //add a uint8_t field to indicate initialized file.
@@ -163,7 +163,6 @@ int fs_mount(const char *diskname) {
 	}
         
 	sem_init(&create_mutex, 0, 1);
-	sem_init(&open_mutex, 0, 1);
 
 	return 0;
 }
@@ -264,6 +263,7 @@ int fs_create(const char *filename) {
 			root_dir_block[i].file_size     = 0;
 			root_dir_block[i].start_data_block = EOC;
 			root_dir_block[i].initialized_file = 0;
+			sem_init(&root_dir_block[i].mutex);
 
    			sem_post(&create_mutex);
 
@@ -354,21 +354,11 @@ int fs_open(const char *filename) {
   //best we can do it to just not let two people open the same file (no. we are not lazy)
   //don't forget to lock!
 
-	sem_wait(&open_mutex);
-
-	if (is_open(filename)){
-		fs_error("the file is already open.\n");
-		sem_post(&open_mutex);
-        return -1;
-	}
-
 	fd_table[fd].is_used    = true;
 	fd_table[fd].file_index = file_index;
 	fd_table[fd].offset     = 0;
 	
 	strcpy(fd_table[fd].file_name, filename); 
-
-	sem_post(&open_mutex);
 
   return fd;
 }
@@ -496,13 +486,11 @@ int fs_write(int fd, void *buf, size_t count) {
 
 	struct rootdirectory_t *the_dir = &root_dir_block[file_index];	
 
-  //TODO: (PART1)
-  //check if filename begins with "lock"
-  //if so, check if the file is initialized before using the new field
-  //if so, throw_error and exit
+	sem_wait(the_dir->mutex);
 
 	if (startswith(file_name, prefix_important) && the_dir->initialized_file == 1){
 		fs_error("important files cannot be editted [%s] \n", file_name);
+		sem_post(the_dir->mutex);
 		return -1;
 	}
 
@@ -650,6 +638,8 @@ int fs_write(int fd, void *buf, size_t count) {
 	fd_table[fd].offset += total_byte_written;
 
 	the_dir->initialized_file = 1;
+
+	sem_post(the_dir->mutex);
 
 	return total_byte_written;
 }
