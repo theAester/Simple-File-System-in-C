@@ -3,11 +3,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <semaphore.h>
 
 #define _UTHREAD_PRIVATE
 #include "disk.h"
 #include "fs.h"
 
+sem_t create_mutex;
+sem_init(&create_mutex, 0, 1);
+
+sem_t open_mutex;
+sem_init(&open_mutex, 0, 1);
 
 // Very nicely display "Function Source of error: the error message"
 #define fs_error(fmt, ...) \
@@ -69,10 +76,12 @@ struct rootdirectory_t {
 	char     filename[FS_FILENAME_LEN];
 	uint32_t file_size;
 	uint16_t start_data_block;
-	uint8_t  unused[10];
+	uint8_t initialized_file = 0 ;
+	uint8_t  unused[9];
   //TODO: (PART1)
   //add a uint8_t field to indicate initialized file.
   //change the unsuded padding bytes to 9 to keep this a constant length
+
 } __attribute__((packed));
 
 
@@ -236,10 +245,12 @@ int fs_create(const char *filename) {
   //TODO: (PART3)
   //for the second issue mentioned. lets be super lazy and just serialize create requsts
   //create a lock at the top and use it here
+    sem_wait(&create_mutex);
 
 	// perform error checking first 
 	if(error_free(filename) == false) {
 		fs_error("error associated with filename");
+		sem_post(&create_mutex);
 		return -1;
 	}
 
@@ -251,12 +262,17 @@ int fs_create(const char *filename) {
 			strcpy(root_dir_block[i].filename, filename);
 			root_dir_block[i].file_size     = 0;
 			root_dir_block[i].start_data_block = EOC;
+			root_dir_block[i].initialized_file = 1;
       //TODO: (PART1)
       //initialize the new field
+   			sem_post(&create_mutex);
 
 			return 0;
 		}
 	}
+
+    sem_post(&create_mutex);
+
 	return -1;
 }
 
@@ -337,6 +353,9 @@ int fs_open(const char *filename) {
   //then explain that, since file access mode is not specified in this FS,
   //best we can do it to just not let two people open the same file (no. we are not lazy)
   //don't forget to lock!
+
+	if (is_open(filename))
+		sem_wait(&create_mutex);
 
   //TODO: (PART5)
   //initialize the FAT list! (look at fs_write funtion line 526 to see how)
@@ -437,6 +456,19 @@ int fs_lseek(int fd, size_t offset) {
 //there are many bugs and wrong policies
 //probably needs a rewrite
 
+bool startswith(char *string, char *start)
+{
+  int string_length = strlen(string);
+  int start_length = strlen(start);
+  
+  if (start_length > string_length) return false;
+
+  for (int i = 0; i < start_length; i++)
+    if (string[i] != start[i]) return false;
+
+  return true;
+}
+
 // Write to a file:
 int fs_write(int fd, void *buf, size_t count) {
 	// Error Checking 
@@ -465,6 +497,11 @@ int fs_write(int fd, void *buf, size_t count) {
   //check if filename begins with "lock"
   //if so, check if the file is initialized before using the new field
   //if so, throw_error and exit
+
+	if (startswith(file_name, 'lock') && the_dir->initialized_file == 1){
+		fs_error("important files cannot be editted [%s] \n", file_name);
+		return -1;
+	}
 
 	int num_blocks = ((count + (offset % BLOCK_SIZE)) / BLOCK_SIZE) + 1; 
 	int cur_block = offset/BLOCK_SIZE;					
