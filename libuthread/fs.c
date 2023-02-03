@@ -74,8 +74,8 @@ struct rootdirectory_t {
 	uint32_t file_size;
 	uint16_t start_data_block;
 	uint8_t initialized_file;
-	sem_t mutex;
-	uint8_t  unused[9];
+	sem_t* mutex;
+	uint8_t  unused[9 - sizeof(sem_t*)];
   //TODO: (PART1)
   //add a uint8_t field to indicate initialized file.
   //change the unsuded padding bytes to 9 to keep this a constant length
@@ -263,7 +263,8 @@ int fs_create(const char *filename) {
 			root_dir_block[i].file_size     = 0;
 			root_dir_block[i].start_data_block = EOC;
 			root_dir_block[i].initialized_file = 0;
-			sem_init(&root_dir_block[i].mutex);
+			root_dir_block[i].mutex = (sem_t*)malloc(sizeof(sem_t));
+			sem_init(root_dir_block[i].mutex, 0, 1);
 
    			sem_post(&create_mutex);
 
@@ -387,6 +388,8 @@ int fs_close(int fd) {
     } 
 
     fd_obj->is_used = false;
+	sem_destroy(root_dir_block[fd_table[fd].file_index].mutex);
+	free(root_dir_block[fd_table[fd].file_index].mutex);
 
 	return 0;
 }
