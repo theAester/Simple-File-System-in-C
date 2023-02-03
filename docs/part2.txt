@@ -1,0 +1,77 @@
+همانطور که در تعریف پروژه آورده شده بود. اشکالی در سیستم دسترسی و محاسبه بلوک های مقصد در تابع fs_write وجود داشت.
+وجود این امر را با نوشتن و اضافه کردن تابع test جدید به نام type به test-fs.c دریافتیم. این تابع درست مانند نابع add
+است با این تفاوت که به جای اینکه فایلی را از فضای دیسک host به دیسک مجازی خودش کپی کند، به کاربر این اجازه را می‌دهد که 
+محتویات فایل را تایپ کند.
+
+[محتویات تابع thread_func_type در فایل test-fs.c]
+[تصویر p2-1] 
+
+مشخصا این تابع برعکس تابع add، تابع fs_write را چندین مرتبه صدا می‌زند. اما همینطور که از تصویر زیر پیداست، پیاده سازی 
+اولیه‌ی این fs هنگام نوشتن خط دوم، یعنی در دسترسی دوم به فایل باز شده برای نوشتن، crash میکند. ابزار debugging مشخص می‌کند
+این اتفاق به دلیل دسترسی به حافظه خارج از محدوده(SIGSEGV) در خط ۴۸۴ فایل fs.c کد اصلی اتفاق می‌افتد که واضحا یعنی مقدار frst_dta_blk_i و به طبع، کل سیستم محاسبه آدرس ها اشتباه است.
+
+برای حل این مشکل نیاز بود تا کد مربوط به این تابع، خط به خط بررسی شود. این بررسی کمک کرد که چند ایراد اساسی را در این کد پیدا کنیم:
+۱- تعریف مبتذل آرایه داینامیک: در خط ۴۵۳ بدون بررسی مقدار extra_blocks، به این تعداد int، روی استک تخصیص داده شده که این در C
+استاندارد ممنوع است و فقط کامپایلر GCC اجازه این کار را ‌میدهد. این باعث می‌شود که در صورت صفر شدن متغیر extra_blocks، آدرس آرایه تعریف شده با آدرس متفیر قبلی آن یکی شود. همچنین جلو تر در خط ۴۷۲،‌به صورت hard-code شده از عنصر شماره صفر این آرایه خوانده شده. به نظر می‌آید که برنامه نویسان اولیه پروژه، حالتی که در آن write شدن مجدد در یک بلوک به طول کمتر از یک بلوک(صرفا آپدیت شدن یک تک بلوک) اتفاق می‌افتد را از قلم انداخته اند.
+
+	int fat_block_indices[extra_blocks];
+	curr_fat_index = fat_block_indices[0];
+
+۲- خطوط ۴۷۱ تا ۴۸۵ ایراد منطقی دارند و کارشان را به درستی انجام نمی‌دهند.
+
+if(the_dir->start_data_block == EOC) { 
+	curr_fat_index = fat_block_indices[0];
+	the_dir->start_data_block = curr_fat_index;
+}else {
+	int frst_dta_blk_i = the_dir->start_data_block;
+	while(frst_dta_blk_i != EOC){
+		frst_dta_blk_i = FAT_blocks[frst_dta_blk_i].words;
+	}
+	for(int k =0; k < num_blocks; k++){
+		FAT_blocks[frst_dta_blk_i].words = fat_block_indices[k];
+		frst_dta_blk_i = FAT_blocks[frst_dta_blk_i].words;
+	}
+	FAT_blocks[frst_dta_blk_i].words = EOC;
+}
+	
+
+با بررسی کد می‌توان دید که درصورت اجرا شدن بلوک else، به دلیل وجود حلقه while قبل از آن، یا در خط ۴۸۱ یا ۴۸۴ به مشکل SIGSEGV بر می‌خوریم! زیرا به هر حال با مقدار frst_dta_blk_i=EOC از while خارج شده ایم و این مقدار بلافاصله index می‌شود. کاری که این بخش قرار است انجام دهد صرفا این است که مقادیر FAT_table را update کند. قبلا به تعداد بلوک های جدیدی که قرار است به این فایل اضافه شوند، بلوک خالی از FAT پیدا کرده ایم و در آرایه ی fat_block_indices ذخیره کرده ایم و حالا باید آن ها را در FAT به فایل خودمان اختصاص دهیم.
+
+با توجه به توضیحات بالا، قطعه کد زیر را جایگزین آن کردیم تا همان کار را انجام دهد:
+
+int frst_dta_blk_i = the_dir->start_data_block;
+if(frst_dta_blk_i == EOC){
+	if(available_data_blocks == 0){
+		fs_error("something is really really bad");
+	}
+	the_dir->start_data_block = fat_block_indices[0];
+	frst_dta_blk_i = fat_block_indices[0];
+	curr_fat_index = fat_block_indices[0];
+}
+while(FAT_blocks[frst_dta_blk_i].words != EOC){
+	frst_dta_blk_i = FAT_blocks[frst_dta_blk_i].words;
+}
+for(int k =0; k < available_data_blocks-1; k++){ // < prolly num_blocks -> available_data_blocks
+	FAT_blocks[frst_dta_blk_i].words = fat_block_indices[k];
+	frst_dta_blk_i = FAT_blocks[frst_dta_blk_i].words;
+}
+FAT_blocks[frst_dta_blk_i].words = EOC;
+
+۳- در حلقه‌ی write کردن به صورت بلوکی حالتی که بخواهیم محتوای یک بلوک را از یک جایی به بعد update کنیم به درسیتی پیاده سازی نشده.
+
+memcpy(bounce_buff + location, write_buf, left_shift);
+block_write(curr_fat_index + superblock->data_start_index, (void*)bounce_buff);
+
+
+درواقع در دو خط بالا که که اطلاعات به بخش درستی از buffer کپی شوند و از آنجا هم به بلوک به درستی پیاده سازی شده اما اطلاعات قبل از location در buffer نامشخص است و این باعث ایجاد corruption می‌شود. برای این منظور کد زیر را قبل از این دو خط اضافه کردیم تا درصورت لزوم، قبل از نوشتن بلوک مربوطه ابتدا یک بار آن را بخواند!
+
+if(location !=0){
+	block_read(curr_fat_index + superblock->data_start_index, (void*)bounce_buff);
+}
+
+حال تست می‌کنیم:
+
+[تصویر   p2-2]
+[تصویر   p2-3]
+
+همان طور که دیده شد باگ برطرف شده و تمام functionality قبلی سر جای خودش باقی مانده.
