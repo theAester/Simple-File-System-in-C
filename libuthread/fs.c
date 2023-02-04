@@ -279,6 +279,7 @@ int fs_create(const char *filename) {
 			//write back the root directory block
 			if(block_write(superblock->num_FAT_blocks + 1, (void*)root_dir_block) < 0) {
 				fs_error("failure to write to block \n");
+				sem_post(&create_mutex);
 					return -1;
 			}
 
@@ -860,10 +861,15 @@ static bool error_free(const char *filename){
 		return false;
 	}
 
+
 	// check if file already exists 
 	int same_char = 0;
 	int files_in_rootdir = 0;
 	for(int i = 0; i < FS_FILE_MAX_COUNT; i++){
+		if(!strcmp(root_dir_block[i].filename, filename)){
+			fs_error("file already exists");
+			return false;
+		}
 		for(int j = 0; j < size; j ++){
 			if(root_dir_block[i].filename[j] == filename[j])
 				same_char++;
