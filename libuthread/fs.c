@@ -522,6 +522,7 @@ int fs_write(int fd, void *buf, size_t count) {
   //TODO: (PART2)
   //This if block is probably redundant here
   //move it to the next block in order to fix
+	/*
 	if(the_dir->start_data_block == EOC) { 
 		curr_fat_index = fat_block_indices[0];
 		the_dir->start_data_block = curr_fat_index;
@@ -544,6 +545,25 @@ int fs_write(int fd, void *buf, size_t count) {
 		}
 		FAT_blocks[frst_dta_blk_i].words = EOC; // < we fuck up here (for now)
 	}
+	*/
+	int frst_dta_blk_i = the_dir->start_data_block;
+	if(frst_dta_blk_i == EOC){
+		if(available_data_blocks == 0){
+			fs_error("something is really really bad");
+		}
+		the_dir->start_data_block = fat_block_indices[0];
+		frst_dta_blk_i = fat_block_indices[0];
+		curr_fat_index = fat_block_indices[0];
+	}
+	while(FAT_blocks[frst_dta_blk_i].words != EOC){
+		frst_dta_blk_i = FAT_blocks[frst_dta_blk_i].words;
+	}
+	for(int k =0; k < available_data_blocks-1; k++){ // < prolly num_blocks -> available_data_blocks
+		FAT_blocks[frst_dta_blk_i].words = fat_block_indices[k];
+		frst_dta_blk_i = FAT_blocks[frst_dta_blk_i].words;
+	}
+	FAT_blocks[frst_dta_blk_i].words = EOC; // < we fuck up here (for now)
+	//attended
 
 	num_blocks = ((count + (offset % BLOCK_SIZE)) / BLOCK_SIZE) + 1; // ok but why??
 
