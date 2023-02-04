@@ -1,0 +1,36 @@
+در کد داده شده اصولا اطلاعاتی هنگام ساختن فایل در آن نوشته نوی‌شود. تنهای چیزی که تغییر می‌کند محتویات root directory است(از آنجایی که این filesystem از فولد بندی پشتیبانی نمیکند چیز دیگری تغییر نمی‌کند) که آنها را هم با یک دستور block_write به دیسک منتقل می‌کنیم
+
+if(block_write(superblock->num_FAT_blocks + 1, (void*)root_dir_block) < 0) {
+	fs_error("failure to write to block \n");
+	sem_post(&create_mutex);
+	return -1;
+}
+
+همین کار را در تابع fs_delete هم انجام می‌دهیم.
+در دیلیت کردن ممکن است که علاوه بر محتویات بلوک root dir، محتویات FAT block ها هم عوض شده باشد به همین خاطر در ابتدا بلوک هایی که entry های این فایل در FAT را شامل می‌شوند را پیدا می‌کنیم و آنها را write back می‌کنیم.
+
+while (frst_dta_blk_i != EOC) {
+	uint16_t blockind = frst_dta_blk_i*2/BLOCK_SIZE;
+	// check if we already added this block
+	int flag=0;
+	for(int i=0;i<num_blocks;i++){
+		if(indices[i] == blockind){
+			flag=1;
+			break;
+		}
+	}
+	if(!flag) indices[num_blocks++] = blockind;
+
+	uint16_t tmp = FAT_blocks[frst_dta_blk_i].words;
+	FAT_blocks[frst_dta_blk_i].words = EMPTY;
+	frst_dta_blk_i = tmp;
+}
+
+...
+
+for(int i=0;i<num_blocks;i++){
+	block_write(1 + indices[i], (void*)FAT_blocks + (indices[i]*BLOCK_SIZE)); // write back
+}
+
+
+
