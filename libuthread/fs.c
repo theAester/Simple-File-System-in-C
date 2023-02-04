@@ -272,7 +272,7 @@ int fs_create(const char *filename) {
 			root_dir_block[i].file_size     = 0;
 			root_dir_block[i].start_data_block = EOC;
 			  //TODO: (PART1)
-			  //initialize the new fi
+			  //initialize the new file
 			root_dir_block[i].initialized_file = 0;
 
 			//TODO: (PART4)
@@ -311,8 +311,6 @@ int fs_delete(const char *filename) {
 
 	uint16_t indices[superblock->num_FAT_blocks];
 	uint16_t num_blocks =0;
-
-	char* buff [BLOCK_SIZE];
 
 	while (frst_dta_blk_i != EOC) {
 		//TODO: (PART4)
@@ -683,10 +681,14 @@ int fs_write(int fd, void *buf, size_t count) {
     //fix this.
     //[redacted]prolly only needs to be checked for i = 0
     //yes it only needs to be checked for i=0
+	sem_wait(&mount_mutex);
 	if(!mount_flag){
 		fs_error("filesystem is not mounted");
+		sem_post(&mount_mutex);
 		return -1;
 	}
+	sem_post(&mount_mutex);
+
 		if(location !=0){
 			block_read(curr_fat_index + superblock->data_start_index, (void*)bounce_buff);
 		}
@@ -729,6 +731,8 @@ int fs_write(int fd, void *buf, size_t count) {
 	}
 
 	fd_table[fd].offset += total_byte_written;
+	the_dir->initialized_file = 1;
+	sem_post(the_dir->mutex);
 	return total_byte_written;
 }
 
@@ -738,16 +742,16 @@ Read a File:
 	   the file descriptor is valid.
 */
 int fs_read(int fd, void *buf, size_t count) {
-	
-  // error check 
-  if(fd_table[fd].is_used == false || 
-    fd >= FS_OPEN_MAX_COUNT) {
-    fs_error("invalid file descriptor [%d]", fd);
-    return -1;
-  } else if (count <= 0) {
-    fs_error("request nbyte amount is trivial");
-    return -1;
-  }else if(!mount_flag){
+
+	// error check 
+	if(fd_table[fd].is_used == false || 
+		fd >= FS_OPEN_MAX_COUNT) {
+		fs_error("invalid file descriptor [%d]", fd);
+		return -1;
+	} else if (count <= 0) {
+		fs_error("request nbyte amount is trivial");
+		return -1;
+	}else if(!mount_flag){
 		fs_error("filesystem is not mounted");
 		return -1;
 	}

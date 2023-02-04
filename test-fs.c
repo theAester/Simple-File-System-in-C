@@ -178,8 +178,9 @@ void thread_fs_type(void *arg)
 		die("Cannot mount diskname");
 
 	if (fs_create(filename)) {
-		fs_umount();
-		die("Cannot create file");
+		//fs_umount();
+		//die("Cannot create file");
+		
 	}
 
 	fs_fd = fs_open(filename);
@@ -192,9 +193,13 @@ void thread_fs_type(void *arg)
   while(fgets(buff, 1024, stdin)){
     buf = buff;
     size_t strlength = strlen(buff);
-    size_t written_bytes=0;
+    int written_bytes=0;
     while(strlength){
       written_bytes = fs_write(fs_fd, buf, strlength);
+	  if(written_bytes < 0){
+				printf("error\n");
+				return;
+			}
       strlength -= written_bytes;
       buf+=written_bytes;
     }
