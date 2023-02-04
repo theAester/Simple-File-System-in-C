@@ -31,6 +31,7 @@ CFLAGS	:= -Wall -Werror
 CFLAGS	+= -O2
 #CFLAGS	+= -O0
 CFLAGS	+= -g
+CFLAGS	+= -pthread
 CFLAGS	+= -pipe
 CFLAGS	+= -lm
 

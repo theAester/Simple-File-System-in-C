@@ -3,11 +3,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <semaphore.h>
 
 #define _UTHREAD_PRIVATE
 #include "disk.h"
 #include "fs.h"
 
+const char prefix_important[] = "lock";
+sem_t create_mutex;
+sem_t mount_mutex;
+int mount_flag;
 
 // Very nicely display "Function Source of error: the error message"
 #define fs_error(fmt, ...) \
@@ -69,10 +74,13 @@ struct rootdirectory_t {
 	char     filename[FS_FILENAME_LEN];
 	uint32_t file_size;
 	uint16_t start_data_block;
-	uint8_t  unused[10];
+	uint8_t initialized_file;
+	sem_t* mutex;
+	uint8_t unused[9-sizeof(sem_t*)];
   //TODO: (PART1)
   //add a uint8_t field to indicate initialized file.
   //change the unsuded padding bytes to 9 to keep this a constant length
+	
 } __attribute__((packed));
 
 
@@ -153,8 +161,12 @@ int fs_mount(const char *diskname) {
 	// initialize file descriptors 
     for(int i = 0; i < FS_OPEN_MAX_COUNT; i++) {
 		fd_table[i].is_used = false;
+		root_dir_block[i].mutex = (sem_t*)malloc(sizeof(sem_t));
+		sem_init(root_dir_block[i].mutex, 0, 1);
 	}
-        
+    sem_init(&create_mutex, 0, 1); 
+	sem_init(&mount_mutex, 0, 1);
+	mount_flag = 1;
 	return 0;
 }
 
@@ -178,6 +190,9 @@ int fs_umount(void) {
   //then continue filling the rest of FAT blocks occupied by the file with EMPTY
   //
   //THEEEN go through the history list, locate the data blocks and write them over.
+	sem_wait(&mount_mutex);
+	mount_flag =0;
+	sem_post(&mount_mutex);
 
 	for(int i = 0; i < superblock->num_FAT_blocks; i++) {
 		if(block_write(i + 1, (void*)FAT_blocks + (i * BLOCK_SIZE)) < 0) {
@@ -192,7 +207,6 @@ int fs_umount(void) {
 	}
 
 	free(superblock);
-	free(root_dir_block);
 	free(FAT_blocks);
 
 	// reset file descriptors
@@ -200,9 +214,12 @@ int fs_umount(void) {
 		fd_table[i].offset = 0;
 		fd_table[i].is_used = false;
 		fd_table[i].file_index = -1;
+		sem_destroy(root_dir_block[i].mutex);
+		free(root_dir_block[i].mutex);
 		memset(fd_table[i].file_name, 0, FS_FILENAME_LEN);
   }
 
+	free(root_dir_block);
 	block_disk_close();
 	return 0;
 }
@@ -236,10 +253,13 @@ int fs_create(const char *filename) {
   //TODO: (PART3)
   //for the second issue mentioned. lets be super lazy and just serialize create requsts
   //create a lock at the top and use it here
+	
+	sem_wait(&create_mutex);
 
 	// perform error checking first 
 	if(error_free(filename) == false) {
 		fs_error("error associated with filename");
+		sem_post(&create_mutex);
 		return -1;
 	}
 
@@ -251,12 +271,23 @@ int fs_create(const char *filename) {
 			strcpy(root_dir_block[i].filename, filename);
 			root_dir_block[i].file_size     = 0;
 			root_dir_block[i].start_data_block = EOC;
-      //TODO: (PART1)
-      //initialize the new field
+			  //TODO: (PART1)
+			  //initialize the new fi
+			root_dir_block[i].initialized_file = 0;
 
+			//TODO: (PART4)
+			//write back the root directory block
+			if(block_write(superblock->num_FAT_blocks + 1, (void*)root_dir_block) < 0) {
+				fs_error("failure to write to block \n");
+					return -1;
+			}
+
+            sem_post(&create_mutex);
 			return 0;
 		}
 	}
+
+
 	return -1;
 }
 
@@ -272,20 +303,50 @@ int fs_delete(const char *filename) {
 		fs_error("file currently open");
 		return -1;
 	}
-
+	
 	int file_index = locate_file(filename);
 	struct rootdirectory_t* the_dir = &root_dir_block[file_index]; 
+	memset(the_dir->filename, 0, FS_FILENAME_LEN); // do this first so that others cant find and open the file
 	int frst_dta_blk_i = the_dir->start_data_block;
 
+	uint16_t indices[superblock->num_FAT_blocks];
+	uint16_t num_blocks =0;
+
+	char* buff [BLOCK_SIZE];
+
 	while (frst_dta_blk_i != EOC) {
+		//TODO: (PART4)
+		//write back FAT blocks
+		uint16_t blockind = frst_dta_blk_i*2/BLOCK_SIZE;
+		// check if we already added this block
+		int flag=0;
+		for(int i=0;i<num_blocks;i++){
+			if(indices[i] == blockind){
+				flag=1;
+				break;
+			}
+		}
+		if(!flag) indices[num_blocks++] = blockind;
+
 		uint16_t tmp = FAT_blocks[frst_dta_blk_i].words;
 		FAT_blocks[frst_dta_blk_i].words = EMPTY;
 		frst_dta_blk_i = tmp;
 	}
 
 	// reset file to blank slate
-	memset(the_dir->filename, 0, FS_FILENAME_LEN);
 	the_dir->file_size = 0;
+
+	//TODO: (PART4)
+	//write back all the changed FAT bloks
+	for(int i=0;i<num_blocks;i++){
+		block_write(1 + indices[i], (void*)FAT_blocks + (indices[i]*BLOCK_SIZE));
+	}
+	//TODO: (PART4)
+	//write back the root directory block
+	if(block_write(superblock->num_FAT_blocks + 1, (void*)root_dir_block) < 0) {
+		fs_error("failure to write to block \n");
+			return -1;
+	}
 
 	return 0;
 }
@@ -328,6 +389,7 @@ int fs_open(const char *filename) {
 		fs_error("max file descriptors already allocated\n");
         return -1;
     }
+
 
   //TODO: (PART3)
   //[redacted]add a check to see if the file is already opened by someone else by searching in the newly created <open_list>
@@ -432,6 +494,18 @@ int fs_lseek(int fd, size_t offset) {
 	return 0;
 }
 
+bool startswith(const char *string, const char *start)
+{
+  int string_length = strlen(string);
+  int start_length = strlen(start);
+  
+  if (start_length > string_length) return false;
+
+  for (int i = 0; i < start_length; i++)
+    if (string[i] != start[i]) return false;
+
+  return true;
+}
 //TODO: (PART2)
 //The entire write function is FUCKED!
 //there are many bugs and wrong policies
@@ -452,10 +526,13 @@ int fs_write(int fd, void *buf, size_t count) {
 	} else if (fd_table[fd].is_used == false) {
         fs_error("file descriptor is not open");
         return -1;
+	}else if(!mount_flag){
+		fs_error("disk is not mounted!");
+		return -1;
 	}
 
 	// find relative information about file 
-	//char *file_name = fd_table[fd].file_name;				
+	char *file_name = fd_table[fd].file_name;				
 	int file_index = fd_table[fd].file_index;			
 	int offset = fd_table[fd].offset;						
 
@@ -465,6 +542,17 @@ int fs_write(int fd, void *buf, size_t count) {
   //check if filename begins with "lock"
   //if so, check if the file is initialized before using the new field
   //if so, throw_error and exit
+	if(sem_wait(the_dir->mutex)){
+		fs_error("cant lock file for writing. the file is possibly just deleted.");
+		sem_post(the_dir->mutex);
+		return -1;
+	}
+
+	if (startswith(file_name, prefix_important) && the_dir->initialized_file == 1){
+		fs_error("important files cannot be editted [%s] \n", file_name);
+		sem_post(the_dir->mutex);
+		return -1;
+	}
 
 	int num_blocks = ((count + (offset % BLOCK_SIZE)) / BLOCK_SIZE) + 1; 
 	int cur_block = offset/BLOCK_SIZE;					
@@ -595,6 +683,10 @@ int fs_write(int fd, void *buf, size_t count) {
     //fix this.
     //[redacted]prolly only needs to be checked for i = 0
     //yes it only needs to be checked for i=0
+	if(!mount_flag){
+		fs_error("filesystem is not mounted");
+		return -1;
+	}
 		if(location !=0){
 			block_read(curr_fat_index + superblock->data_start_index, (void*)bounce_buff);
 		}
@@ -655,7 +747,10 @@ int fs_read(int fd, void *buf, size_t count) {
   } else if (count <= 0) {
     fs_error("request nbyte amount is trivial");
     return -1;
-  } 
+  }else if(!mount_flag){
+		fs_error("filesystem is not mounted");
+		return -1;
+	}
 
 	// gather nessessary information 
 	//char *file_name = fd_table[fd].file_name;
@@ -695,6 +790,10 @@ int fs_read(int fd, void *buf, size_t count) {
 			left_shift = amount_to_read;
 		}
 
+		if(!mount_flag){
+			fs_error("filesystem is not mounted");
+			return -1;
+		}
 		// read file contents 
 		block_read(FAT_iter + superblock->data_start_index, (void*)bounce_buff);
 		memcpy(read_buf, bounce_buff + location, left_shift);
