@@ -455,7 +455,7 @@ int fs_write(int fd, void *buf, size_t count) {
 	}
 
 	// find relative information about file 
-	char *file_name = fd_table[fd].file_name;				
+	//char *file_name = fd_table[fd].file_name;				
 	int file_index = fd_table[fd].file_index;			
 	int offset = fd_table[fd].offset;						
 
@@ -658,8 +658,8 @@ int fs_read(int fd, void *buf, size_t count) {
   } 
 
 	// gather nessessary information 
-	char *file_name = fd_table[fd].file_name;
-	int file_index = fs_table[fd].file_index;
+	//char *file_name = fd_table[fd].file_name;
+	int file_index = fd_table[fd].file_index;
 	size_t offset = fd_table[fd].offset;
 	
 	struct rootdirectory_t *the_dir = &root_dir_block[file_index];
